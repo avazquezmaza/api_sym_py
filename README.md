@@ -19,4 +19,5 @@ python serviceOrders.py
 
 ## user.key
  Se debe colocar el usuario y password de Sym, separado por ":"
+ 
  User:Pass
