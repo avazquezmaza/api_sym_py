@@ -7,7 +7,6 @@ from datetime import datetime
 import pandas as pd
 
 ################################Vars#########################################################    
-
 # Ambiente, cambiar variable
 enviroment = "att-mx" # prod
 #enviroment = "att-mx-lab" # lab
@@ -21,6 +20,10 @@ url = f"https://{enviroment}.symphonica.com:443/sso_rest/authentication/login"
 url_get = f"https://{enviroment}.symphonica.com:443/inventory-manager/api/services"
 url_ota_refresh = f"https://{enviroment}.symphonica.com:443/workflow-order-manager/api/workflow-orders"
 
+
+# La expresión regular para validar números de 10 y 15 dígitos
+patron_10_digitos = re.compile(r'^\d{10}$')
+patron_15_digitos = re.compile(r'^\+?\d{15}$')
 ################################Class#########################################################    
 
 class Customer:
@@ -49,13 +52,12 @@ def get_token():
     else:
         print("Error al token")
 
-def validate_phone_number(phone_number):
-    # Validate phone number format
-    if len(phone_number) != 10:
-        return False
-    if not phone_number.isdigit():
-        return False
-    return True
+def validate_phone_number(number):
+    # Validar el número
+    if patron_10_digitos.match(number) or patron_15_digitos.match(number):
+        return True
+    
+    return False
 
 def read_file_line_by_line(file_name, token):
     print("003 - read_file_line_by_line")
@@ -64,49 +66,51 @@ def read_file_line_by_line(file_name, token):
             line = line.strip()  # Remove leading and trailing whitespaces
             if validate_phone_number(line):
                 print(f"Valid phone number: {line}")
+                
+                params_get = {
+                    "rql": f"and(eq(type,CFS),eq(serviceSpecification.name,MOBILE_LINE),eq(serviceCharacteristics.value,{line})),limit(0,10)"
+                }
+
+                headers_get = {
+                    "x-organization-code": "ATT-MX",
+                    "Content-Type": "application/iway-inventory-manager-logical-resource-post-v1-hal+json",
+                    "x-authorization": f"{token}"
+                }
+                
+                try:
+                    responseGet = requests.get(url_get, headers=headers_get, params=params_get)
+                    responseGet.raise_for_status()  # Lanza una excepción si el estado es 4xx o 5xx
+
+                    if responseGet.status_code == 200:
+                        data_get = responseGet.json()
+                        content = data_get['content']
+
+                        if len(content) > 0:
+                            for x in content:
+                                publicIdentifier = x['publicIdentifier']
+                                relatedParty = x['relatedParty']
+
+                            for y in relatedParty:
+                                relatedParty_name = y['name']
+
+                            customers.append(Customer(publicIdentifier, relatedParty_name, line))
+                        else:
+                            print(f"Phone number: {line} not found")
+
+                    else:
+                        print("Error:", responseGet.status_code)
+                    
+                except requests.exceptions.HTTPError as errh:
+                    print(f"Error HTTP: {errh}")
+                except requests.exceptions.ConnectionError as errc:
+                    print(f"Error de conexión: {errc}")
+                except requests.exceptions.Timeout as errt:
+                    print(f"Error de tiempo de espera: {errt}")
+                except requests.exceptions.RequestException as err:
+                    print(f"Error de solicitud: {err}")
+
             else:
                 print(f"Invalid phone number: {line}")
-
-            params_get = {
-                "rql": f"and(eq(type,CFS),eq(serviceSpecification.name,MOBILE_LINE),eq(serviceCharacteristics.value,{line})),limit(0,10)"
-            }
-
-            headers_get = {
-                "x-organization-code": "ATT-MX",
-                "Content-Type": "application/iway-inventory-manager-logical-resource-post-v1-hal+json",
-                "x-authorization": f"{token}"
-            }
-            
-            try:
-                responseGet = requests.get(url_get, headers=headers_get, params=params_get)
-                responseGet.raise_for_status()  # Lanza una excepción si el estado es 4xx o 5xx
-
-                if responseGet.status_code == 200:
-                    data_get = responseGet.json()
-
-                    content = data_get['content']
-
-                    for x in content:
-                        publicIdentifier = x['publicIdentifier']
-                        relatedParty = x['relatedParty']
-
-                    for y in relatedParty:
-                        relatedParty_name = y['name']
-
-                    customers.append(Customer(publicIdentifier, relatedParty_name, line))
-
-                else:
-                    print("Error:", responseGet.status_code)
-                
-            except requests.exceptions.HTTPError as errh:
-                print(f"Error HTTP: {errh}")
-            except requests.exceptions.ConnectionError as errc:
-                print(f"Error de conexión: {errc}")
-            except requests.exceptions.Timeout as errt:
-                print(f"Error de tiempo de espera: {errt}")
-            except requests.exceptions.RequestException as err:
-                print(f"Error de solicitud: {err}")
-
 
 def execute_GLS_Force_Refresh(token):
     print("004 - execute_OTA_Force_Refresh")
@@ -213,5 +217,6 @@ set_global_param(read_user_key('user.key'))
 token  = get_token()
 read_file_line_by_line('numeros_telefonicos.csv',token)
 #print("customers:: ",customers)
+
 prepare_bulkOrders_GLS()
 # execute_GLS_Force_Refresh(token)
